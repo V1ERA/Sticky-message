@@ -56,24 +56,37 @@ client.once(Events.ClientReady, async () => {
         for (const [channelId, stickyMessage] of client.stickyChannels) {
             try {
                 const channel = await client.channels.fetch(channelId);
+    
                 if (channel && channel.type === ChannelType.GuildText) {
+                    // Check permissions
+                    const permissions = channel.permissionsFor(client.user);
+                    if (!permissions.has('SendMessages') || !permissions.has('ViewChannel')) {
+                        console.log(`Missing permissions in channel: ${channelId}. Removing from sticky message list.`);
+                        
+                        // Remove from database
+                        client.stickyChannels.delete(channelId);
+                        db.run(`DELETE FROM sticky_channels WHERE channel_id = ?`, [channelId]);
+    
+                        continue; // Skip
+                    }
+    
                     const lastMessage = await channel.messages.fetch({ limit: 1 });
                     const stickyMessageId = await new Promise((resolve) => {
                         db.get(`SELECT last_message_id FROM sticky_channels WHERE channel_id = ?`, [channelId], (err, row) => {
                             resolve(row ? row.last_message_id : null);
                         });
                     });
-
+    
                     if (lastMessage.size === 0 || lastMessage.first().id !== stickyMessageId) {
                         const newMessage = await channel.send(stickyMessage);
                         db.run(`UPDATE sticky_channels SET last_message_id = ? WHERE channel_id = ?`, [newMessage.id, channelId]);
-
+    
                         if (stickyMessageId) {
                             try {
                                 const stickyMessageToDelete = await channel.messages.fetch(stickyMessageId);
                                 await stickyMessageToDelete.delete();
                             } catch (err) {
-                                // Channel might have been deleted just ignore
+                                // Ignore channel
                             }
                         }
                     }
@@ -87,7 +100,8 @@ client.once(Events.ClientReady, async () => {
                 }
             }
         }
-    }, 10000);
+    }, 5000);
+    
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
