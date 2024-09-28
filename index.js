@@ -2,6 +2,8 @@ const { Client, GatewayIntentBits, Events, ChannelType, REST, Routes } = require
 require('dotenv').config();
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
+const express = require('express');
+const os = require('os');
 
 const db = new sqlite3.Database('./database.sql', (err) => {
     if (err) {
@@ -56,31 +58,29 @@ client.once(Events.ClientReady, async () => {
         for (const [channelId, stickyMessage] of client.stickyChannels) {
             try {
                 const channel = await client.channels.fetch(channelId);
-    
+
                 if (channel && channel.type === ChannelType.GuildText) {
-                    // Check permissions
                     const permissions = channel.permissionsFor(client.user);
                     if (!permissions.has('SendMessages') || !permissions.has('ViewChannel')) {
                         console.log(`Missing permissions in channel: ${channelId}. Removing from sticky message list.`);
                         
-                        // Remove from database
                         client.stickyChannels.delete(channelId);
                         db.run(`DELETE FROM sticky_channels WHERE channel_id = ?`, [channelId]);
-    
-                        continue; // Skip
+
+                        continue;
                     }
-    
+
                     const lastMessage = await channel.messages.fetch({ limit: 1 });
                     const stickyMessageId = await new Promise((resolve) => {
                         db.get(`SELECT last_message_id FROM sticky_channels WHERE channel_id = ?`, [channelId], (err, row) => {
                             resolve(row ? row.last_message_id : null);
                         });
                     });
-    
+
                     if (lastMessage.size === 0 || lastMessage.first().id !== stickyMessageId) {
                         const newMessage = await channel.send(stickyMessage);
                         db.run(`UPDATE sticky_channels SET last_message_id = ? WHERE channel_id = ?`, [newMessage.id, channelId]);
-    
+
                         if (stickyMessageId) {
                             try {
                                 const stickyMessageToDelete = await channel.messages.fetch(stickyMessageId);
@@ -101,9 +101,9 @@ client.once(Events.ClientReady, async () => {
             }
         }
     }, 5000);
-    
 });
 
+// Handle interactions/commands
 client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isCommand()) return;
 
@@ -123,3 +123,71 @@ process.on('unhandledRejection', error => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
+// Website
+
+const app = express();
+const port = process.env.PORT;
+
+app.use(express.static('public'));
+
+// Route to get bot info
+app.get('/bot-info', (req, res) => {
+    res.json({
+        name: client.user.username,
+        avatar: client.user.displayAvatarURL()
+    });
+});
+
+// Status route
+app.get('/status', (req, res) => {
+    const botPing = client.ws.ping;
+    const botUptime = formatUptime(client.uptime);
+    const memoryUsage = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
+    const serverCount = client.guilds.cache.size;
+
+    db.get('SELECT COUNT(*) AS stickyCount FROM sticky_channels', [], (err, row) => {
+        if (err) {
+            console.error('Error fetching sticky channels count: ' + err.message);
+            res.status(500).send('Error fetching data');
+            return;
+        }
+
+        const stickyChannelCount = row.stickyCount;
+
+        const osUptime = formatUptime(os.uptime() * 1000);
+        const totalMem = (os.totalmem() / 1024 / 1024).toFixed(2);
+        const freeMem = (os.freemem() / 1024 / 1024).toFixed(2);
+        const cpuCount = os.cpus().length;
+
+        res.json({
+            bot: {
+                ping: botPing,
+                uptime: botUptime,
+                memoryUsage,
+                serverCount,
+                stickyChannelCount
+            },
+            system: {
+                osUptime,
+                totalMem,
+                freeMem,
+                cpuCount
+            }
+        });
+    });
+});
+
+app.listen(port, () => {
+    console.log(`Website is running on http://localhost:${port}`);
+});
+
+function formatUptime(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    return `${days}d ${hours}h ${minutes}m ${seconds}s`;
+}

@@ -11,6 +11,7 @@ module.exports = {
         const uptime = interaction.client.uptime; // Bot uptime in ms
         const formattedUptime = formatUptime(uptime); // Format uptime to readable string
         const memoryUsage = process.memoryUsage().heapUsed / 1024 / 1024; // In MB
+        const stickyChannelsCount = interaction.client.stickyChannels.size; // Sticky channels count
 
         // Get OS stats
         const osType = os.type(); // OS type (Linux, Windows, etc.)
@@ -25,6 +26,7 @@ module.exports = {
 🏓 **Ping**: ${ping}ms
 🕒 **Uptime**: ${formattedUptime}
 💾 **Memory Usage**: ${memoryUsage.toFixed(2)} MB
+📌 **Sticky Channels**: ${stickyChannelsCount}
 
 **System Status**:
 🖥️ **OS**: ${osType}
